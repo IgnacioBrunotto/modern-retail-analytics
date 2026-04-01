@@ -1,0 +1,62 @@
+version: 2
+
+models:
+  - name: stg_orders
+    description: "One row per order line item. Cleaned and typed from raw_invoices. Contains all transactions including cancellations and adjustments."
+    columns:
+      - name: invoice_id
+        description: "Invoice number. Prefix C indicates a cancellation."
+        tests:
+          - not_null
+      - name: stock_code
+        description: "Product stock code."
+        tests:
+          - not_null
+      - name: customer_id
+        description: "Customer identifier. Nullable in source but filtered in stg_customers."
+      - name: product_description
+        description: "Product name. Cleaned with INITCAP and TRIM."
+      - name: country
+        description: "Country of the customer."
+      - name: quantity
+        description: "Quantity per line item. Can be negative for returns."
+      - name: unit_price
+        description: "Unit price in GBP. Can be zero or negative in source."
+      - name: invoice_at
+        description: "Invoice timestamp."
+      - name: is_cancelled
+        description: "True if the invoice was a cancellation (Invoice prefix C)."
+      - name: stock_code_type
+        description: "Classification of the stock code."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['product', 'adjustment', 'fee', 'other']
+
+  - name: stg_products
+    description: "One row per unique product. Deduplicated from stg_orders, keeping most recent record."
+    columns:
+      - name: stock_code
+        description: "Product stock code. Primary key."
+        tests:
+          - unique
+          - not_null
+      - name: product_description
+        description: "Product name. Cleaned and deduplicated."
+      - name: unit_price
+        description: "Most recent unit price in GBP."
+        tests:
+          - not_null
+      - name: stock_code_type
+        description: "Classification of the stock code."
+
+  - name: stg_customers
+    description: "One row per unique customer. Deduplicated from stg_orders, keeping most recent country."
+    columns:
+      - name: customer_id
+        description: "Customer identifier. Primary key."
+        tests:
+          - unique
+          - not_null
+      - name: country
+        description: "Most recent country of the customer."
