@@ -1,0 +1,8 @@
+version: 2
+
+sources:
+  - name: raw_retail
+    database: dw1010
+    schema: raw_retail
+    tables:
+      - name: raw_invoices
