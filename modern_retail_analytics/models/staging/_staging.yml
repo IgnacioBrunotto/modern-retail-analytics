@@ -2,61 +2,111 @@ version: 2
 
 models:
   - name: stg_orders
-    description: "One row per order line item. Cleaned and typed from raw_invoices. Contains all transactions including cancellations and adjustments."
+    description: >
+      One row per order line item from the Online Retail II dataset.
+      Cleaned and typed from raw_invoices. Contains all transactions including
+      sales, returns (negative quantity), cancellations (invoice prefix C),
+      adjustments, and fees. This is the base model for stg_products and stg_customers.
     columns:
       - name: invoice_id
-        description: "Invoice number. Prefix C indicates a cancellation."
+        description: >
+          Invoice number cast to string. Prefix 'C' indicates a cancellation invoice.
+          A single invoice can contain multiple line items with the same stock_code
+          (no natural line-level PK exists in the source).
         tests:
           - not_null
       - name: stock_code
-        description: "Product stock code."
+        description: >
+          Product stock code cast to string. Can be a numeric product SKU,
+          or a special code for adjustments (e.g. ADJUST, B, M) and fees
+          (e.g. POST, DOT, AMAZONFEE). Classified by stock_code_type.
         tests:
           - not_null
       - name: customer_id
-        description: "Customer identifier. Nullable in source but filtered in stg_customers."
+        description: >
+          Customer identifier cast to string. Nullable in the source —
+          roughly 25% of rows have no customer_id (guest transactions).
+          Null rows are excluded in stg_customers but kept here to preserve
+          full sales volume.
       - name: product_description
-        description: "Product name. Cleaned with INITCAP and TRIM."
+        description: >
+          Product name from the source Description field, cleaned with
+          INITCAP and TRIM. Can be null for some adjustment and fee rows.
       - name: country
-        description: "Country of the customer."
+        description: >
+          Country associated with the transaction. A small number of customers
+          (~13) have orders from multiple countries; stg_customers keeps only
+          the most recent one.
       - name: quantity
-        description: "Quantity per line item. Can be negative for returns."
+        description: >
+          Units per line item. Positive for sales, negative for returns.
+          Cancellation invoices (is_cancelled = TRUE) typically have negative quantities.
       - name: unit_price
-        description: "Unit price in GBP. Can be zero or negative in source."
+        description: >
+          Price per unit in GBP (not total line amount). Revenue for a line item
+          is quantity * unit_price. Can be zero or negative in the source for
+          adjustments and corrections.
       - name: invoice_at
-        description: "Invoice timestamp."
+        description: "Timestamp of the invoice, cast from InvoiceDate."
       - name: is_cancelled
-        description: "True if the invoice was a cancellation (Invoice prefix C)."
+        description: >
+          TRUE if the invoice_id starts with 'C', indicating a cancellation.
+          Cancellation invoices reverse a previous sale and typically have
+          negative quantities.
       - name: stock_code_type
-        description: "Classification of the stock code."
+        description: >
+          Classification of the stock_code. Values:
+          'product' = numeric SKU (commercial item),
+          'adjustment' = manual correction entry (ADJUST, ADJUST2, B, M, m),
+          'fee' = operational charge (POST, DOT, C2, BANK CHARGES, AMAZONFEE, D, CRUK),
+          'other' = unclassified code.
         tests:
           - accepted_values:
               arguments:
                 values: ['product', 'adjustment', 'fee', 'other']
 
   - name: stg_products
-    description: "One row per unique product. Deduplicated from stg_orders, keeping most recent record."
+    description: >
+      One row per unique product SKU. Deduplicated from stg_orders using the
+      most recent invoice line per stock_code. Excludes adjustments, fees,
+      test products (TEST001, TEST002), samples (S, PADS), and eBay entries.
+      Serves as the product catalog for downstream marts.
     columns:
       - name: stock_code
-        description: "Product stock code. Primary key."
+        description: "Product stock code. Primary key of this model."
         tests:
           - unique
           - not_null
       - name: product_description
-        description: "Product name. Cleaned and deduplicated."
+        description: >
+          Most recent non-null product name for the SKU, cleaned with
+          INITCAP and TRIM from stg_orders.
       - name: unit_price
-        description: "Most recent unit price in GBP."
+        description: >
+          Most recent unit price in GBP for the SKU, always > 0.
+          Rows with zero or negative prices are excluded during deduplication.
         tests:
           - not_null
       - name: stock_code_type
-        description: "Classification of the stock code."
+        description: >
+          Classification inherited from stg_orders. In this model the values
+          are limited to 'product' and 'other' since adjustments and fees
+          are filtered out.
 
   - name: stg_customers
-    description: "One row per unique customer. Deduplicated from stg_orders, keeping most recent country."
+    description: >
+      One row per unique customer. Deduplicated from stg_orders using the
+      most recent invoice per customer_id. Excludes rows where customer_id
+      is null (guest transactions). Serves as the customer dimension for
+      downstream marts.
     columns:
       - name: customer_id
-        description: "Customer identifier. Primary key."
+        description: "Customer identifier. Primary key of this model."
         tests:
           - unique
           - not_null
       - name: country
-        description: "Most recent country of the customer."
+        description: >
+          Most recent country associated with the customer based on invoice_at.
+          For the ~13 customers with orders from multiple countries, only the
+          latest country is kept.
