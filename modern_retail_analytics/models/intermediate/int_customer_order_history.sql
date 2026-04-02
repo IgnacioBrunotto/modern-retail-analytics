@@ -19,6 +19,8 @@ aggregated AS (
         SUM(CASE WHEN is_cancelled = FALSE
             THEN line_revenue ELSE 0 END)                           AS total_revenue_gross,
         SUM(line_revenue)                                           AS total_revenue_net,
+        SUM(CASE WHEN is_cancelled = TRUE
+            THEN line_revenue ELSE 0 END)                           AS total_revenue_cancelled,
         SUM(CASE WHEN is_cancelled = FALSE THEN line_revenue END)
             / NULLIF(COUNT(DISTINCT CASE WHEN is_cancelled = FALSE
             THEN invoice_id END), 0)                                AS avg_order_value,
@@ -35,6 +37,7 @@ aggregated AS (
     FROM orders
     WHERE customer_id IS NOT NULL
     GROUP BY customer_id
+    HAVING COUNT(DISTINCT CASE WHEN is_cancelled = FALSE THEN invoice_id END) > 0
 )
 
 SELECT * FROM aggregated
