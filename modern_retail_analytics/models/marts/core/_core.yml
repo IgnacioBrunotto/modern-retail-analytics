@@ -1,0 +1,83 @@
+version: 2
+
+models:
+  - name: fct_orders
+    description: "One row per order line item. Central fact table of the star schema. Includes all transactions (sales, returns, cancellations). Foreign keys connect to dim_customers, dim_products and dim_date."
+    columns:
+      - name: order_line_id
+        description: "Surrogate key generated from invoice_id, stock_code, quantity, unit_price and invoice_at. Not guaranteed unique — source has duplicate lines with identical attributes."
+        tests:
+          - not_null
+      - name: customer_id_key
+        description: "Foreign key to dim_customers."
+        tests:
+          - relationships:
+              arguments:
+                to: ref('dim_customers')
+                field: customer_id_key
+      - name: product_id
+        description: "Foreign key to dim_products."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_products')
+                field: product_id
+      - name: date_id
+        description: "Foreign key to dim_date."
+        tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_id
+      - name: invoice_id
+        description: "Invoice number. Degenerate dimension."
+        tests:
+          - not_null
+      - name: quantity_type
+        description: "Classification of the line: sale, return, or cancellation."
+        tests:
+          - accepted_values:
+              arguments:
+                values: ['sale', 'return', 'cancellation']
+
+
+  - name: dim_customers
+    description: "One row per customer. Includes purchase history metrics and customer tier based on total gross revenue."
+    columns:
+      - name: customer_id_key
+        description: "Surrogate key."
+        tests:
+          - unique
+          - not_null
+      - name: customer_id
+        description: "Natural key from source."
+        tests:
+          - not_null
+
+  - name: dim_products
+    description: "One row per product SKU. Includes catalog attributes, sales history metrics, price tier and activity status."
+    columns:
+      - name: product_id
+        description: "Surrogate key."
+        tests:
+          - unique
+          - not_null
+      - name: stock_code
+        description: "Natural key from source."
+        tests:
+          - not_null
+
+  - name: dim_date
+    description: "Date dimension generated with dbt_utils.date_spine. Covers 2009-12-01 to 2011-12-31."
+    columns:
+      - name: date_id
+        description: "Surrogate key in YYYYMMDD integer format."
+        tests:
+          - unique
+          - not_null
+      - name: date_day
+        description: "Calendar date."
+        tests:
+          - not_null
