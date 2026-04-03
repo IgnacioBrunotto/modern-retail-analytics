@@ -34,7 +34,7 @@ invoice_stats AS (
     GROUP BY invoice_id, customer_id
 ),
 
-final AS (
+enriched AS (
     SELECT
         -- Surrogate key --
         {{ dbt_utils.generate_surrogate_key(['orders.invoice_id', 'orders.stock_code', 'orders.quantity', 'orders.unit_price', 'orders.invoice_at']) }} AS order_line_id,
@@ -54,9 +54,6 @@ final AS (
         orders.quantity,
         orders.unit_price,
         orders.line_revenue,
-        SUM(orders.line_revenue) OVER (
-            PARTITION BY orders.invoice_id
-        )                                                               AS invoice_total,
 
         -- Clasificación de línea --
         CASE
@@ -83,6 +80,16 @@ final AS (
         ON orders.stock_code = dim_products.stock_code
     LEFT JOIN invoice_stats
         ON orders.invoice_id = invoice_stats.invoice_id
+),
+
+final AS (
+    SELECT
+        *,
+        SUM(CASE WHEN quantity_type = 'sale'
+            THEN line_revenue ELSE 0 END) OVER (
+            PARTITION BY invoice_id
+        )                                                               AS invoice_total
+    FROM enriched
 )
 
 SELECT * FROM final

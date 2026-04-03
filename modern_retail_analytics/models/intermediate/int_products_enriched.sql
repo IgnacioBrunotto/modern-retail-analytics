@@ -17,7 +17,7 @@ sales_history AS (
         SUM(quantity)                               AS total_units_sold,
         SUM(quantity * unit_price)                  AS total_revenue,
         COUNT(DISTINCT invoice_id)                  AS total_orders,
-        SUM(quantity) / COUNT(DISTINCT invoice_id)  AS avg_quantity_per_order
+        SAFE_DIVIDE(SUM(quantity), COUNT(DISTINCT invoice_id)) AS avg_quantity_per_order
     FROM orders
     GROUP BY stock_code
 ),
@@ -41,9 +41,11 @@ enriched AS (
         s.total_revenue,
         s.total_orders,
         s.avg_quantity_per_order,
-        DATE_DIFF(d.max_date, DATE(s.last_sold_at), DAY)   AS days_since_last_sale,
-        DATE_DIFF(d.max_date, DATE(s.last_sold_at), DAY)
-            <= 90                                           AS is_active
+        DATE_DIFF(d.max_date, DATE(s.last_sold_at), DAY)       AS days_since_last_sale,
+        COALESCE(
+            DATE_DIFF(d.max_date, DATE(s.last_sold_at), DAY) <= 90,
+            FALSE
+        )                                                           AS is_active
 
     FROM products AS p
     LEFT JOIN sales_history AS s USING (stock_code)

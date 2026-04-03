@@ -2,18 +2,17 @@ WITH orders AS (
     SELECT * FROM {{ ref('fct_orders') }}
 ),
 
-customers AS (
-    SELECT customer_id, region
-    FROM {{ ref('dim_customers') }}
+country_regions AS (
+    SELECT * FROM {{ ref('country_regions') }}
 ),
 
 joined AS (
     SELECT
         orders.*,
-        customers.region
+        country_regions.region
     FROM orders
-    LEFT JOIN customers
-        ON orders.customer_id = customers.customer_id
+    LEFT JOIN country_regions
+        ON orders.country = country_regions.country
 ),
 
 aggregated AS (

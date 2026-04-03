@@ -25,24 +25,14 @@ final AS (
         customers.country,
         country_regions.region,
 
-        -- Historial de compras --
+        -- Atributos de perfil --
         history.first_order_at,
         history.last_order_at,
-        history.total_orders,
-        history.total_line_items,
-        history.total_unique_products,
         history.customer_lifespan_days,
-        history.is_repeat_customer,
-
-        -- Revenue --
-        history.total_revenue_gross,
-        history.total_revenue_net,
-        history.total_revenue_cancelled,
-        history.avg_order_value,
-
-        -- Atributos derivados --
         DATE_DIFF(d.max_date, DATE(history.last_order_at), DAY)     AS days_since_last_order,
 
+        -- Segmentación --
+        history.is_repeat_customer,
         CASE
             WHEN history.total_revenue_gross >= 5500    THEN 'platinum'
             WHEN history.total_revenue_gross >= 2500    THEN 'gold'
