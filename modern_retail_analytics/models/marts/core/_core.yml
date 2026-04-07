@@ -2,14 +2,25 @@ version: 2
 
 models:
   - name: fct_orders
-    description: "One row per order line item. Central fact table of the star schema. Includes all transactions (sales, returns, cancellations). Foreign keys connect to dim_customers, dim_products and dim_date."
+    description: >
+      One row per order line item. Central fact table of the star schema.
+      Includes all transactions (sales, returns, cancellations). Foreign keys
+      connect to dim_customers, dim_products and dim_date. Guest transactions
+      (~23% of rows) have null customer_id_key.
+    config:
+      meta:
+        owner: analytics
+        domain: sales
     columns:
       - name: order_line_id
-        description: "Surrogate key generated from invoice_id, stock_code, quantity, unit_price and invoice_at. Not guaranteed unique — source has duplicate lines with identical attributes."
+        description: >
+          Surrogate key generated from invoice_id, stock_code, quantity, unit_price
+          and invoice_at. Not guaranteed unique — source has duplicate lines with
+          identical attributes.
         tests:
           - not_null
       - name: customer_id_key
-        description: "Foreign key to dim_customers."
+        description: "Foreign key to dim_customers. NULL for guest transactions."
         tests:
           - relationships:
               arguments:
@@ -24,7 +35,7 @@ models:
                 to: ref('dim_products')
                 field: product_id
       - name: date_id
-        description: "Foreign key to dim_date."
+        description: "Foreign key to dim_date. Integer in YYYYMMDD format."
         tests:
           - not_null
           - relationships:
@@ -32,22 +43,54 @@ models:
                 to: ref('dim_date')
                 field: date_id
       - name: invoice_id
-        description: "Invoice number. Degenerate dimension."
+        description: "Invoice number. Degenerate dimension. Prefix 'C' indicates cancellation."
         tests:
           - not_null
+      - name: customer_id
+        description: "Customer natural key. Degenerate dimension. NULL for guest transactions."
+      - name: stock_code
+        description: "Product stock code. Degenerate dimension."
+      - name: country
+        description: "Country at time of transaction. Use dim_customers.country for the customer's current country."
+      - name: quantity
+        description: "Units per line. Positive for sales, negative for returns and cancellations."
+      - name: unit_price
+        description: "Unit price in GBP at time of transaction. Can be zero or negative."
+      - name: line_revenue
+        description: "quantity * unit_price. Negative for returns and cancellations."
+      - name: invoice_total
+        description: "Total gross revenue of the invoice (sum of sale lines only). Repeated across all lines of the same invoice."
       - name: quantity_type
-        description: "Classification of the line: sale, return, or cancellation."
+        description: "Line classification: 'sale' (positive quantity, not cancelled), 'return' (negative quantity, not cancelled), 'cancellation' (invoice prefix C)."
         tests:
           - accepted_values:
               arguments:
                 values: ['sale', 'return', 'cancellation']
-
+      - name: customer_order_sequence
+        description: "Order number for this customer (1 = first purchase, 2 = second, etc.). NULL for guests and cancelled orders."
+      - name: days_since_previous_order
+        description: "Days between this invoice and the customer's previous invoice. NULL for first order and guests."
+      - name: invoice_at
+        description: "Invoice timestamp."
+        tests:
+          - not_null
+      - name: is_cancelled
+        description: "TRUE if the invoice prefix is 'C'."
+      - name: is_guest
+        description: "TRUE if customer_id is NULL (anonymous transaction)."
 
   - name: dim_customers
-    description: "One row per customer. Includes purchase history metrics and customer tier based on total gross revenue."
+    description: >
+      One row per customer. Dimensional attributes only — metrics live in fct_orders.
+      Includes geographic data, customer tier based on total gross revenue,
+      and recency/engagement attributes.
+    config:
+      meta:
+        owner: analytics
+        domain: customers
     columns:
       - name: customer_id_key
-        description: "Surrogate key."
+        description: "Surrogate key. MD5 hash of customer_id."
         tests:
           - unique
           - not_null
@@ -55,12 +98,40 @@ models:
         description: "Natural key from source."
         tests:
           - not_null
+      - name: country
+        description: "Most recent country of the customer based on invoice date."
+      - name: region
+        description: "Geographic region from country_regions seed. Values: Europe, Asia Pacific, Americas, Middle East & Africa, Unknown."
+      - name: first_order_at
+        description: "Timestamp of the customer's first non-cancelled order."
+      - name: last_order_at
+        description: "Timestamp of the customer's most recent non-cancelled order."
+      - name: customer_lifespan_days
+        description: "Days between first and last non-cancelled order. Zero for one-time customers."
+      - name: days_since_last_order
+        description: "Days between last order and dataset max date (2011-12-09). Used as recency proxy."
+      - name: is_repeat_customer
+        description: "TRUE if customer has more than one distinct non-cancelled invoice."
+      - name: customer_tier
+        description: >
+          Revenue-based segmentation:
+          platinum >= £5,500 (top 10%),
+          gold £2,500–£5,500 (P75–P90),
+          silver £500–£2,500 (P25–P75),
+          bronze < £500 (bottom 25%).
 
   - name: dim_products
-    description: "One row per product SKU. Includes catalog attributes, sales history metrics, price tier and activity status."
+    description: >
+      One row per commercial product SKU. Includes catalog attributes,
+      sales history metrics, price tier classification, and activity status.
+      Excludes adjustments, fees, test products, and samples.
+    config:
+      meta:
+        owner: analytics
+        domain: products
     columns:
       - name: product_id
-        description: "Surrogate key."
+        description: "Surrogate key. MD5 hash of stock_code."
         tests:
           - unique
           - not_null
@@ -68,12 +139,42 @@ models:
         description: "Natural key from source."
         tests:
           - not_null
+      - name: product_description
+        description: "Most recent product name from the catalog."
+      - name: stock_code_type
+        description: "Classification inherited from stg_orders. Values limited to 'product' and 'other' in this model."
+      - name: unit_price
+        description: "Most recent unit price in GBP for this SKU."
+      - name: price_tier
+        description: "Price segment: budget (< £2.50), mid (£2.50–£10), premium (>= £10). Thresholds based on P50 and P90 of the dataset."
+      - name: first_sold_at
+        description: "Timestamp of the first recorded sale of this product."
+      - name: last_sold_at
+        description: "Timestamp of the most recent sale of this product."
+      - name: total_units_sold
+        description: "Total units sold across all non-cancelled orders."
+      - name: total_revenue
+        description: "Total gross revenue generated by this product."
+      - name: total_orders
+        description: "Number of distinct invoices that included this product."
+      - name: avg_quantity_per_order
+        description: "Average units per order. Uses SAFE_DIVIDE to handle zero."
+      - name: days_since_last_sale
+        description: "Days between last sale and dataset max date. NULL if never sold."
+      - name: is_active
+        description: "TRUE if the product had a sale within the last 90 days of the dataset. FALSE if inactive or never sold."
 
   - name: dim_date
-    description: "Date dimension generated with dbt_utils.date_spine. Covers 2009-12-01 to 2011-12-31."
+    description: >
+      Date dimension generated with dbt_utils.date_spine.
+      Covers 2009-12-01 to 2011-12-31, matching the Online Retail II dataset range.
+    config:
+      meta:
+        owner: analytics
+        domain: time
     columns:
       - name: date_id
-        description: "Surrogate key in YYYYMMDD integer format."
+        description: "Surrogate key in YYYYMMDD integer format. Join key to fct_orders.date_id."
         tests:
           - unique
           - not_null
@@ -81,3 +182,21 @@ models:
         description: "Calendar date."
         tests:
           - not_null
+      - name: year
+        description: "Calendar year (2009, 2010, 2011)."
+      - name: quarter
+        description: "Calendar quarter (1–4)."
+      - name: month
+        description: "Calendar month number (1–12)."
+      - name: month_name
+        description: "Full month name (January, February, etc.)."
+      - name: week
+        description: "Week number of the year."
+      - name: day_of_month
+        description: "Day of month (1–31)."
+      - name: day_of_week
+        description: "Day of week (1 = Sunday, 7 = Saturday) per BigQuery convention."
+      - name: day_name
+        description: "Full day name (Monday, Tuesday, etc.)."
+      - name: is_weekend
+        description: "TRUE if day_of_week is 1 (Sunday) or 7 (Saturday)."

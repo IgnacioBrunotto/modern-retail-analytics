@@ -2,7 +2,15 @@ version: 2
 
 models:
   - name: int_orders_with_items
-    description: "One row per order line item. Joins stg_orders with stg_products to enrich each transaction with product description. Excludes fees and adjustments via INNER JOIN. Includes cancellations to allow net revenue calculation downstream."
+    description: >
+      One row per order line item. Joins stg_orders with stg_products to enrich
+      each transaction with product description. Excludes fees and adjustments
+      via INNER JOIN with stg_products. Includes cancellations and returns to
+      allow net revenue calculation downstream.
+    config:
+      meta:
+        owner: analytics
+        domain: sales
     columns:
       - name: invoice_id
         description: "Invoice number. Inherited from stg_orders."
@@ -15,24 +23,31 @@ models:
       - name: customer_id
         description: "Customer identifier. Nullable — guest transactions have no customer_id."
       - name: country
-        description: "Country of the customer at time of transaction. Inherited from stg_orders — reflects transaction-level country, not the customer's current country."
+        description: "Country of the customer at time of transaction. Reflects transaction-level country, not the customer's current country."
       - name: product_description
-        description: "Product name. Inherited from stg_products catalog."
+        description: "Product name from stg_products catalog — canonical, deduplicated description."
       - name: quantity
-        description: "Quantity per line item. Negative values indicate cancellations and are preserved for net revenue calculation."
+        description: "Quantity per line item. Negative for returns and cancellations."
       - name: unit_price
-        description: "Unit price in GBP per transaction line. Inherited from stg_orders — can be zero or negative for corrections even if the product has a positive price in the catalog."
+        description: "Unit price in GBP per transaction line. Can be zero or negative for corrections."
       - name: line_revenue
-        description: "Revenue for this line item. Calculated as quantity * unit_price. Negative for cancellations."
+        description: "quantity * unit_price. Negative for cancellations and returns."
       - name: invoice_at
         description: "Invoice timestamp."
         tests:
           - not_null
       - name: is_cancelled
-        description: "True if the invoice was a cancellation."
+        description: "TRUE if the invoice was a cancellation (invoice_id prefix 'C')."
 
   - name: int_customer_order_history
-    description: "One row per customer with aggregated purchase history. Built from int_orders_with_items. Includes both gross and net revenue metrics to support different analytical use cases."
+    description: >
+      One row per customer with aggregated purchase history metrics.
+      Built from int_orders_with_items. Excludes customers with only cancelled orders
+      via HAVING clause. Separates gross and net revenue for flexible downstream use.
+    config:
+      meta:
+        owner: analytics
+        domain: customers
     columns:
       - name: customer_id
         description: "Customer identifier. Primary key of this model."
@@ -50,18 +65,57 @@ models:
       - name: total_orders
         description: "Total number of distinct non-cancelled invoices."
       - name: total_line_items
-        description: "Total number of order line items across all non-cancelled invoices."
+        description: "Total number of line items across all non-cancelled invoices."
       - name: total_unique_products
-        description: "Number of distinct products purchased across all non-cancelled orders."
+        description: "Number of distinct SKUs purchased across all non-cancelled orders."
       - name: total_revenue_gross
-        description: "Total revenue from non-cancelled lines only."
+        description: "Sum of line_revenue for non-cancelled lines only."
       - name: total_revenue_net
-        description: "Total revenue including cancellations. Equals gross minus the absolute value of cancelled amounts."
+        description: "Sum of all line_revenue including cancellations. Gross minus cancelled amounts."
       - name: total_revenue_cancelled
-        description: "Total value of cancelled order lines. Always zero or negative."
+        description: "Sum of line_revenue for cancelled lines only. Always zero or negative."
       - name: avg_order_value
-        description: "Average gross revenue per non-cancelled invoice. Calculated as total_revenue_gross divided by total_orders."
+        description: "total_revenue_gross / total_orders. Uses NULLIF to avoid division by zero."
       - name: customer_lifespan_days
         description: "Days between first and last non-cancelled order. Zero for one-time customers."
       - name: is_repeat_customer
-        description: "True if the customer has more than one distinct non-cancelled invoice."
+        description: "TRUE if the customer has more than one distinct non-cancelled invoice."
+
+  - name: int_products_enriched
+    description: >
+      One row per product SKU from stg_products, enriched with sales history metrics
+      from stg_orders. Only counts non-cancelled sales with positive quantity.
+      is_active is anchored to the dataset max date (not CURRENT_DATE) since the
+      source data is static (ends 2011-12-09).
+    config:
+      meta:
+        owner: analytics
+        domain: products
+    columns:
+      - name: stock_code
+        description: "Product stock code. Primary key of this model."
+        tests:
+          - unique
+          - not_null
+      - name: product_description
+        description: "Most recent product name from stg_products."
+      - name: unit_price
+        description: "Most recent unit price in GBP from stg_products."
+      - name: stock_code_type
+        description: "Classification from stg_orders. Limited to 'product' and 'other' in this model."
+      - name: first_sold_at
+        description: "Timestamp of the earliest sale for this SKU."
+      - name: last_sold_at
+        description: "Timestamp of the most recent sale. NULL if never sold."
+      - name: total_units_sold
+        description: "Total units sold across non-cancelled, positive-quantity lines."
+      - name: total_revenue
+        description: "Total gross revenue (quantity * unit_price) for this SKU."
+      - name: total_orders
+        description: "Number of distinct invoices that included this SKU."
+      - name: avg_quantity_per_order
+        description: "Average units per order. Uses SAFE_DIVIDE — NULL if never sold."
+      - name: days_since_last_sale
+        description: "Days between last_sold_at and dataset max date. NULL if never sold."
+      - name: is_active
+        description: "TRUE if last sale was within 90 days of dataset max date. FALSE if inactive or never sold."

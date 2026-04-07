@@ -1,0 +1,76 @@
+version: 2
+
+models:
+  - name: fct_revenue_daily
+    description: >
+      Revenue aggregated by day and country. One row per date_day + country combination.
+      Includes gross, net and cancelled revenue, plus transaction mix metrics.
+      Built from fct_orders. Use with dim_date for time-series analysis and
+      with country_regions seed for geographic filtering.
+    config:
+      meta:
+        owner: analytics
+        domain: finance
+    columns:
+      - name: date_id
+        description: "Date key in YYYYMMDD format. Foreign key to dim_date."
+        tests:
+          - not_null
+      - name: date_day
+        description: "Calendar date of the aggregation."
+        tests:
+          - not_null
+      - name: country
+        description: "Country of the transactions."
+      - name: total_orders
+        description: "Distinct invoices on this day and country."
+      - name: total_customers
+        description: "Distinct customers on this day and country. Excludes guests."
+      - name: total_line_items
+        description: "Total order lines on this day and country."
+      - name: revenue_gross
+        description: "Sum of line_revenue for sale lines only."
+      - name: revenue_cancelled
+        description: "Sum of line_revenue for cancellation lines. Always zero or negative."
+      - name: revenue_net
+        description: "Sum of all line_revenue including cancellations and returns."
+      - name: sale_lines
+        description: "Count of lines classified as 'sale'."
+      - name: return_lines
+        description: "Count of lines classified as 'return'."
+      - name: cancellation_lines
+        description: "Count of lines classified as 'cancellation'."
+      - name: guest_lines
+        description: "Count of lines from guest transactions (is_guest = TRUE)."
+
+  - name: fct_revenue_by_country
+    description: >
+      Revenue aggregated by month, country and region. One row per month + country combination.
+      Region is joined directly from country_regions seed using the transaction country,
+      so guest transactions are correctly attributed geographically.
+      Built from fct_orders.
+    config:
+      meta:
+        owner: analytics
+        domain: finance
+    columns:
+      - name: month
+        description: "First day of the calendar month (DATE_TRUNC to MONTH)."
+        tests:
+          - not_null
+      - name: country
+        description: "Country of the transactions."
+      - name: region
+        description: "Geographic region from country_regions seed."
+      - name: total_orders
+        description: "Distinct invoices in this month and country."
+      - name: total_customers
+        description: "Distinct customers in this month and country. Excludes guests."
+      - name: revenue_gross
+        description: "Sum of line_revenue for sale lines only."
+      - name: revenue_cancelled
+        description: "Sum of line_revenue for cancellation lines. Always zero or negative."
+      - name: revenue_net
+        description: "Sum of all line_revenue including cancellations and returns."
+      - name: avg_order_value
+        description: "revenue_gross / distinct sale invoices. Uses NULLIF to avoid division by zero."
